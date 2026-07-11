@@ -161,6 +161,16 @@ On the first `/watch` call, the skill runs `scripts/setup.py --check`. If `ffmpe
 
 After setup, preflight is silent and `/watch` just works. The check is a sub-100ms lookup, so it doesn't slow you down on subsequent runs.
 
+### YouTube visual-download troubleshooting
+
+Recent YouTube extraction may need yt-dlp's EJS components plus a JavaScript runtime. `/watch` automatically enables Node when `node` is on `PATH` and uses a Chrome client only when yt-dlp reports one is available. If captions work but the visual run says it received an HTML page instead of media, update yt-dlp and install its optional YouTube dependencies, then retry:
+
+```bash
+python -m pip install -U "yt-dlp[default,curl-cffi]"
+```
+
+Keep a current Node runtime on `PATH`. If the error persists, the source or network is blocking public media delivery; transcript mode can still work, but do not claim visual verification until the media endpoint is reachable.
+
 ## Bring your own keys
 
 Captions cover the majority of public videos for free. The Whisper fallback only kicks in when a video genuinely has no caption track — typically local files, TikToks, some Vimeos, and the occasional caption-less YouTube upload.

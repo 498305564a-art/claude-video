@@ -80,6 +80,46 @@ def _pick_video(out_dir: Path) -> Path | None:
     return None
 
 
+def _yt_dlp_runtime_args() -> list[str]:
+    """Enable yt-dlp's Node runtime when one is available.
+
+    Recent YouTube extraction can require yt-dlp's external JavaScript
+    components. Passing the explicit runtime lets a current yt-dlp use Node
+    without requiring callers to know its absolute path.
+    """
+    node = shutil.which("node")
+    return ["--js-runtimes", f"node:{node}"] if node else []
+
+
+def _youtube_impersonation_args(url: str) -> list[str]:
+    """Use a Chrome client for YouTube only when yt-dlp reports one is available."""
+    host = (urlparse(url).hostname or "").lower()
+    if not (host == "youtu.be" or host.endswith(".youtube.com")):
+        return []
+    try:
+        result = subprocess.run(
+            ["yt-dlp", "--list-impersonate-targets"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except OSError:
+        return []
+    if result.returncode == 0 and re.search(r"^Chrome[\s-]", result.stdout, re.MULTILINE):
+        return ["--impersonate", "chrome"]
+    return []
+
+
+def _is_html_response(path: Path) -> bool:
+    """Return whether a purported media file is actually an HTML error page."""
+    try:
+        with path.open("rb") as stream:
+            prefix = stream.read(512).lstrip().lower()
+    except OSError:
+        return False
+    return prefix.startswith((b"<!doctype html", b"<html"))
+
+
 def fetch_captions(url: str, out_dir: Path, sub_langs: str | None = None) -> dict:
     """Fetch metadata and best available VTT captions without downloading video."""
     if shutil.which("yt-dlp") is None:
@@ -90,6 +130,8 @@ def fetch_captions(url: str, out_dir: Path, sub_langs: str | None = None) -> dic
     output_template = str(out_dir / "video.%(ext)s")
     cmd = [
         "yt-dlp",
+        *_yt_dlp_runtime_args(),
+        *_youtube_impersonation_args(url),
         "--skip-download",
         "--write-info-json",
         "--write-subs",
@@ -147,6 +189,8 @@ def download_url(
     fmt = "ba/bestaudio" if audio_only else "bv*[height<=720]+ba/b[height<=720]/bv+ba/b"
     cmd = [
         "yt-dlp",
+        *_yt_dlp_runtime_args(),
+        *_youtube_impersonation_args(url),
         "-N", "8",
         "-f", fmt,
         "--merge-output-format", "mp4",
@@ -170,6 +214,13 @@ def download_url(
     if video is None:
         raise SystemExit(
             f"yt-dlp did not produce a video file in {out_dir} (exit {result.returncode})"
+        )
+    if _is_html_response(video):
+        raise SystemExit(
+            "yt-dlp saved an HTML error page instead of media; visual extraction "
+            "cannot continue. Update yt-dlp with its YouTube EJS dependencies and "
+            "a Node runtime, then retry. If it persists, the source or network is "
+            "blocking public media delivery."
         )
 
     subtitle = _pick_subtitle(out_dir, sub_langs)
