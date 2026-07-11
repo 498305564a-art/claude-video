@@ -68,12 +68,12 @@ When the user names a moment ("around 2:30", "the last 30 seconds", "from 0:45 t
 
 Frame selection — keyframes (`efficient`), scene-change detection (`balanced`/`token-burner`), or the uniform sampler it falls back to — can still surface near-identical frames: a screen recording that holds one slide for 90 seconds produces a dozen, each billed as a separate image. A dedup pass drops them before frames reach Claude. It runs by default on every frame mode (`--no-dedup` turns it off):
 
-1. One `ffmpeg` call scales each extracted JPEG to a 16×16 grayscale thumbnail. Everything after is pure-stdlib Python — no image libraries.
+1. One `ffmpeg` call scales each extracted JPEG to a 64×64 grayscale thumbnail. Everything after is pure-stdlib Python — no image libraries.
 2. For each frame, compute the **mean absolute difference** against the *last frame that was kept* (average per-pixel brightness change, 0–255 scale).
-3. If that difference is at or below the threshold (`2.0`), the frame is a near-duplicate and is dropped. Otherwise it's kept and becomes the new reference.
+3. If that difference is at or below the threshold (`0.5`), the frame is a near-duplicate and is dropped. Otherwise it's kept and becomes the new reference.
 4. The frame-budget cap applies *after* dedup, so the budget is spent on distinct frames.
 
-Comparing against the last *kept* frame (not the previous one) catches slow fades that never trip a frame-to-frame threshold. The threshold is deliberately low and measures absolute brightness rather than structure, so a one-line code diff, a terminal scrolling a row, or two differently-colored flat slides all survive.
+Comparing against the last *kept* frame (not the previous one) catches slow fades that never trip a frame-to-frame threshold. The tighter threshold and larger thumbnail preserve small UI changes such as a code diff, a terminal row, or a slide-gaining-a-bullet.
 
 The **Frames** line reports what was collapsed, e.g. `6 selected from 14 candidates (… 8 near-duplicates dropped …)`. On always-moving footage nothing is dropped and you pay what you would have anyway.
 
@@ -194,6 +194,7 @@ Other knobs (passed to `scripts/watch.py`):
 - `--timestamps T1,T2,…` — grab a frame at each absolute timestamp (`SS`/`MM:SS`/`HH:MM:SS`). Claude reads the transcript first, then targets the moments the presenter flags ("look here", "as you can see"). Added on top of the detail frames (reserved against the cap); out-of-window cues are dropped in focus mode; with `--detail transcript` these become the only frames.
 - `--max-frames N` — lower the frame cap for a tighter token budget.
 - `--resolution W` — bump frame width to 1024 px when Claude needs to read on-screen text (slides, terminals, code).
+- `--sub-langs LANGS` — caption-language priority for yt-dlp (default: `zh.*,en.*`; example: `ja.*,en.*`).
 - `--fps F` — override the auto-fps calculation (still capped at 2 fps).
 - `--whisper groq|openai` — force a specific Whisper backend.
 - `--no-whisper` — disable transcription entirely; frames only.

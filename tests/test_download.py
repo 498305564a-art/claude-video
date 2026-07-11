@@ -2,8 +2,9 @@
 
 Regression guard: ``--sub-langs all`` makes yt-dlp fetch YouTube's hundreds of
 auto-translated caption tracks, which can take minutes and stalls before the
-video download even starts. We only support English, so the request must stay
-bounded to the English-only pattern.
+video download even starts. The default must stay bounded to Chinese and
+English, with caller-provided language priorities validated before subprocess
+execution.
 """
 from __future__ import annotations
 
@@ -35,6 +36,7 @@ def _capture_argv(monkeypatch: pytest.MonkeyPatch) -> list[list[str]]:
         return _Result()
 
     monkeypatch.setattr(download.subprocess, "run", fake_run)
+    monkeypatch.setattr(download.shutil, "which", lambda _: "/usr/bin/yt-dlp")
     return calls
 
 
@@ -43,22 +45,40 @@ def _sub_langs(argv: list[str]) -> str:
     return argv[idx + 1]
 
 
-def _assert_english_only(langs: str) -> None:
+def _assert_bounded_default(langs: str) -> None:
     tokens = langs.split(",")
     assert "all" not in tokens, f"sub-langs must not request all languages, got {langs!r}"
-    assert all(t.startswith("en") for t in tokens), f"sub-langs must be English-only, got {langs!r}"
+    assert tokens == ["zh.*", "en.*"]
 
 
-def test_fetch_captions_requests_english_only(monkeypatch, tmp_path):
+def test_fetch_captions_requests_bounded_chinese_then_english(monkeypatch, tmp_path):
     calls = _capture_argv(monkeypatch)
     download.fetch_captions(URL, tmp_path / "download")
-    _assert_english_only(_sub_langs(calls[0]))
+    _assert_bounded_default(_sub_langs(calls[0]))
 
 
-def test_download_url_requests_english_only(monkeypatch, tmp_path):
+def test_download_url_requests_bounded_chinese_then_english(monkeypatch, tmp_path):
     calls = _capture_argv(monkeypatch)
     # _pick_video returns None with no real file, which raises SystemExit after
     # the yt-dlp argv is already built — that's all we need to inspect.
     with pytest.raises(SystemExit):
         download.download_url(URL, tmp_path / "download")
-    _assert_english_only(_sub_langs(calls[0]))
+    _assert_bounded_default(_sub_langs(calls[0]))
+
+
+def test_custom_caption_priority_reaches_ytdlp(monkeypatch, tmp_path):
+    calls = _capture_argv(monkeypatch)
+    download.fetch_captions(URL, tmp_path / "download", sub_langs="ja.*,en.*")
+    assert _sub_langs(calls[0]) == "ja.*,en.*"
+
+
+def test_rejects_sub_langs_that_look_like_options():
+    with pytest.raises(SystemExit, match="--sub-langs"):
+        download.normalize_sub_langs("--config-location")
+
+
+def test_pick_subtitle_uses_requested_priority(tmp_path):
+    (tmp_path / "video.en.vtt").touch()
+    (tmp_path / "video.zh-Hans.vtt").touch()
+    assert download._pick_subtitle(tmp_path, "zh.*,en.*").name == "video.zh-Hans.vtt"
+    assert download._pick_subtitle(tmp_path, "en.*,zh.*").name == "video.en.vtt"
